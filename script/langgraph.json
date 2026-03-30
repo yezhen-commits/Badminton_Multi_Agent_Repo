@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+      "agent": "./badminton_agent.py:manager_agent"
+  },
+  "env": "../../.env"
+}
