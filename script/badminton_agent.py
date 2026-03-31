@@ -25,7 +25,7 @@ load_dotenv()
 
 mysql_uri = "mysql+mysqlconnector://root:yezhen0100@localhost:3306/badminton_player_database"
 db = SQLDatabase.from_uri(mysql_uri)
-
+                          
 search_engine = TavilyClient()
 
 """System prompt for agents"""
