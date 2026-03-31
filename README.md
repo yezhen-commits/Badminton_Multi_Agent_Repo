@@ -11,6 +11,10 @@ Python version 3.12 is used for this project
 git clone https://github.com/yezhen-commits/Badminton_Multi_Agent_Repo.git
 cd Badminton_Multi_Agent_Repo
 ```
+<<<<<<< HEAD
+=======
+
+>>>>>>> version-1
 Make a copy of example.env
 ```bash
 # Create .env file
