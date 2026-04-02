@@ -36,7 +36,7 @@ search_web_prompt,database_prompt, answer_creation_prompt,manager_prompt = get_a
 
 """format is mysql+mysqlconnector://user:password@localhost:3306/badminton_player_database"""
 
-mysql_uri = "mysql+mysqlconnector://@localhost:3306/badminton_player_database"
+mysql_uri = "mysql+mysqlconnector://:@localhost:3306/badminton_player_database"
 db = SQLDatabase.from_uri(mysql_uri)
 
 search_engine = TavilyClient()
