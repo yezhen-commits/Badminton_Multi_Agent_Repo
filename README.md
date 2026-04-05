@@ -4,14 +4,23 @@ A multi-agent chatbot system that answers badminton-related questions. The syste
 
 ---
 
-## Multi Agent System Architecture 
-![Description](Readme_asset/Agent_Structure.png)
+## ShuttleInfo AI Multi Agent System Architecture 
+![Description](Readme_asset/system_architecture.png)
 
+### Agents Task:
 - Manager Agent: Understands the user's question and decides which agent(s) to call
-- Database Agent: Retrieves badminton player information (name, country, height, birth date, highest ranking) from a MySQL database
+- MongoDB Agent: Retrieves badminton player information (name, country, height, birth date, highest ranking) from a vector database created using MongoDB Atlas
 - MCP Agent: Retrieves badminton competition and tournament data via Sportradar API using the Model Context Protocol (MCP)
 - Search Web Agent: Searches Wikipedia and the web for general badminton knowledge such as rules, techniques, and equipment
 - Answer Creation Agent: Takes all collected information and formats it into a structured response for the user
+
+### Flow:
+- User enter a question
+- Vercel frontend → makes API calls to Render backend
+- Backend talks to Neon PostgreSQL for chat history storage
+- Backend invokes the Manager Agent which fans out to 4 sub-agents
+- Each sub-agent calls its own external service — MongoDB, Sportradar, or Tavily/Wikipedia
+- The Answer agent collects everything and writes the final response, store the answer in the chat history storage and display it back to the frontend
 
 ## Setup
 ### Setting up Backend
@@ -61,6 +70,6 @@ A link will appear in the terminal, open it to have access to view the frontend
 
 --- 
 
-## Changes that will be implement 
-- SQL server will be replaced with a Vector Database for RAG system. The vector database will contain all the player information.
+## Example run:
+![Description](Readme_asset/example_run.png)
 
