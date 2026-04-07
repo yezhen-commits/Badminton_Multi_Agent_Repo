@@ -1,5 +1,4 @@
 from dotenv import load_dotenv
-from pprint import pprint
 from typing import List, Any, Optional, Dict
 from tavily import TavilyClient
 import os
@@ -7,126 +6,248 @@ import wikipedia as wk
 from langchain.agents import create_agent
 from langchain.messages import HumanMessage,AIMessage
 from resource.agent_prompt import get_agent_system_prompt
-from pymongo.mongo_client import MongoClient
-from pymongo.server_api import ServerApi
-from langchain_mongodb import MongoDBAtlasVectorSearch
 from langchain_openai import OpenAIEmbeddings
 from langchain.tools import tool
+from pydantic import BaseModel, Field, model_validator
+import psycopg2
+from pgvector.psycopg2 import register_vector
+import asyncio
 
 load_dotenv()
 search_engine = TavilyClient()
 
-mongo_uri = os.getenv("MONGODB_ATLAS_CLUSTER_URI")
-# Create a new client and connect to the server
-client = MongoClient(mongo_uri, server_api=ServerApi('1'))
+embeddings_model = OpenAIEmbeddings()
 
-db = client.bwf_rankings
-collection = db.rankings
-embeddings = OpenAIEmbeddings()
-
-index_name = "vector_index_1"
-vector_store = MongoDBAtlasVectorSearch(
-    collection=collection,
-    embedding=embeddings,
-    index_name=index_name,
-    relevance_score_fn="cosine",
-)
-
-CATEGORY_MAP = {
-    "men singles": "bwf_men_singles_world_ranking",
-    "women singles": "bwf_women_singles_world_ranking",
-    "men doubles": "bwf_men_doubles_world_ranking",
-    "women doubles": "bwf_women_doubles_world_ranking",
-    "mixed doubles": "bwf_mixed_doubles_world_ranking",
+SINGLES_ALLOWED_FIELDS = {
+    "name":     "name",
+    "country":  "country",
+    "category": "category",
+    "rank":     "rank",
+    "points":   "points"
 }
 
-@tool
-async def search_badminton_player_info(
-    query: str,
-    category: Optional[str] = None,
-    name: Optional[str] = None,
-    pair_name: Optional[str] = None,
-    country: Optional[str] = None,
-    rank: Optional[int] = None,
-    rank_min: Optional[int] = None,
-    rank_max: Optional[int] = None,
-    points_min: Optional[int] = None,
-    points_max: Optional[int] = None,
-    k: int = 5
-) -> str:
-    """
-    Search BWF badminton player rankings from the vector database.
+DOUBLES_ALLOWED_FIELDS = {
+    "player_name":  "dp.name",
+    "country":      "dp.country",
+    "pair_name":    "p.pair_name",
+    "category":     "p.category",
+    "rank":         "p.rank",
+    "points":       "p.points"
+}
 
-    Args:
-        query: Natural language question (Example: "top players from Malaysia")
-        category: Discipline - one of:
-                  'men singles', 'women singles', 'men doubles',
-                  'women doubles', 'mixed doubles'
-        name: Player name to search (for singles players Example: "Viktor Axelsen")
-        pair_name: Pair name to search (for doubles players Example: "Gideon/Sukamuljo")
-        country: 3-letter country code (Example: "MAS", "CHN", "INA", "DEN")
-        rank: Exact rank to filter (Example: 1 for world number 1)
-        rank_min: Minimum rank (Example: 1)
-        rank_max: Maximum rank (Example: 10 to get top 10)
-        points_min: Minimum ranking points
-        points_max: Maximum ranking points
-        k: Number of results to return
-    """
+def get_connection():
+    conn = psycopg2.connect(os.getenv("DATABASE_URL"), sslmode="require")
+    return conn
 
-    pre_filter = {}
+class SinglesSearchQuery(BaseModel):
+    category:   Optional[str]   = Field(None)
+    name:       Optional[str]   = Field(None)
+    country:    Optional[str]   = Field(None)
+    rank:       Optional[int]   = Field(None)
+    rank_min:   Optional[int]   = Field(None)
+    rank_max:   Optional[int]   = Field(None)
+    limit:      int             = Field(10)
+    points:     Optional[int]   = Field(None)
 
-    if category:
-        db_category = CATEGORY_MAP.get(category.lower())
-        if not db_category:
-            return f"Invalid category '{category}'. Choose from: {list(CATEGORY_MAP.keys())}"
-        pre_filter["category"] = {"$eq": db_category}
+class DoublesSearchQuery(BaseModel):
+    category:       Optional[str]   = Field(None)
+    player_name:    Optional[str]   = Field(None)
+    pair_name:      Optional[str]   = Field(None)
+    country:        Optional[str]   = Field(None)
+    rank:           Optional[int]   = Field(None)
+    rank_min:       Optional[int]   = Field(None)
+    rank_max:       Optional[int]   = Field(None)
+    limit:          int             = Field(10)
+    points:         Optional[int]   = Field(None)  
 
-    if name:
-        pre_filter["name"] = {"$eq": name}
+class ProfileSearchQuery(BaseModel):
+    query:          str           = Field(...,  description="Natural language question e.g. 'Olympic gold medal'")
+    name:           Optional[str] = Field(None, description="Filter by player name")
+    content_type:   Optional[str] = Field(None, description="'biography', 'career', or 'achievement'")
+    k:              int           = Field(3,    description="Number of results to return")
 
-    if pair_name:
-        pre_filter["pair_name"] = {"$eq": pair_name}
 
-    if country:
-        pre_filter["country"] = {"$eq": country.upper()}
-
-    if rank:
-        pre_filter["rank"] = {"$eq": rank}
-    else:
-        rank_filter = {}
-        if rank_min:
-            rank_filter["$gte"] = rank_min
-        if rank_max:
-            rank_filter["$lte"] = rank_max
-        if rank_filter:
-            pre_filter["rank"] = rank_filter
-
-    points_filter = {}
-    if points_min:
-        points_filter["$gte"] = points_min
-    if points_max:
-        points_filter["$lte"] = points_max
-    if points_filter:
-        pre_filter["points"] = points_filter
-        
+class FullPlayerSearchQuery(BaseModel):
+    query:str = Field(...,  description="Natural language question e.g. 'Olympic gold medal'")
+    name: str = Field(..., description="Player name to search across all tables e.g. 'Aaron Chia'")
+    
+def search_singles_sync(query: SinglesSearchQuery) -> str:
     try:
-        results = vector_store.similarity_search_with_score(
-            query=query,
-            k=k,
-            pre_filter=pre_filter if pre_filter else None
-        )
-    except Exception as e:
-        return f"Search error: {str(e)}"
+        conn = get_connection()
+        cursor = conn.cursor()
 
-    if not results:
-        return "No players found matching your criteria."
+        selected = list(SINGLES_ALLOWED_FIELDS.values())  # always return all fields
+
+        sql = f"""
+            SELECT {', '.join(selected)}
+            FROM badminton.singles_players
+            WHERE 1=1
+        """
+        params = []
+
+        if query.category:  sql += " AND category = %s";   params.append(query.category)
+        if query.country:   sql += " AND country = %s";    params.append(query.country.upper())
+        if query.rank:      sql += " AND rank = %s";        params.append(query.rank)
+        if query.rank_min:  sql += " AND rank >= %s";       params.append(query.rank_min)
+        if query.rank_max:  sql += " AND rank <= %s";       params.append(query.rank_max)
+        if query.name:
+            name_parts = query.name.strip().split()
+            part_conditions = " OR ".join(["name ILIKE %s"] * len(name_parts))
+            sql += f" AND ({part_conditions})"
+            params.extend(f"%{part}%" for part in name_parts)
+
+        sql += " ORDER BY rank ASC LIMIT %s"
+        params.append(query.limit)
+
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if not rows:
+            return "No singles players found."
+
+        output = []
+        for row in rows:
+            row_data = dict(zip(SINGLES_ALLOWED_FIELDS.keys(), row))
+            output.append(" | ".join(f"{k}: {v}" for k, v in row_data.items()))
+        return "\n".join(output)
+    except Exception as e:
+        return f"Error searching singles: {str(e)}"
+
+def search_doubles_sync(query: DoublesSearchQuery) -> str:
+    """This function is use to search information regarding men double badminton players, women double badminton players and mixed double badminton players"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        selected = list(DOUBLES_ALLOWED_FIELDS.values())  # always return all fields
+
+        sql = f"""
+            SELECT {', '.join(selected)}
+            FROM badminton.doubles_players dp
+            JOIN badminton.doubles_pairs p ON dp.pair_id = p.pair_id
+            WHERE 1=1
+        """
+        params = []
+
+        if query.category:      sql += " AND p.category = %s";         params.append(query.category)
+        if query.pair_name:     sql += " AND p.pair_name ILIKE %s";    params.append(f"%{query.pair_name}%")
+        if query.country:       sql += " AND dp.country = %s";         params.append(query.country.upper())
+        if query.rank:          sql += " AND p.rank = %s";             params.append(query.rank)
+        if query.rank_min:      sql += " AND p.rank >= %s";            params.append(query.rank_min)
+        if query.rank_max:      sql += " AND p.rank <= %s";            params.append(query.rank_max)
+        if query.player_name:
+            name_parts = query.player_name.strip().split()
+            part_conditions = " OR ".join(["dp.name ILIKE %s"] * len(name_parts))
+            sql += f" AND ({part_conditions})"
+            params.extend(f"%{part}%" for part in name_parts)
+
+        sql += " ORDER BY p.rank ASC LIMIT %s"
+        params.append(query.limit)
+
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if not rows:
+            return "No doubles players found."
+
+        output = []
+        for row in rows:
+            row_data = dict(zip(DOUBLES_ALLOWED_FIELDS.keys(), row))
+            output.append(" | ".join(f"{k}: {v}" for k, v in row_data.items()))
+        return "\n".join(output)
+    except Exception as e:
+        return f"Error searching doubles: {str(e)}"
+
+def search_profile_sync(query: ProfileSearchQuery) -> str:
+    """This function is use to find the profile of a specific player, including biography, career and achievements"""
+    try:
+        conn = get_connection()
+        register_vector(conn)
+        cursor = conn.cursor()
+
+        query_vector = embeddings_model.embed_query(query.query)
+
+        sql = """
+            SELECT name, content_type, content,
+                1 - (embedding <=> %s::vector) AS similarity
+            FROM badminton.player_profiles
+            WHERE 1=1
+        """
+        params = [query_vector]
+
+        if query.content_type:  sql += " AND content_type = %s";    params.append(query.content_type)
+        if query.name:
+            name_parts = query.name.strip().split()
+            for part in name_parts:
+                sql += " AND name ILIKE %s"
+                params.append(f"%{part}%")
+
+        sql += " ORDER BY similarity DESC LIMIT %s"
+        params.append(query.k)
+
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if not rows:
+            return "No profile information found."
+
+        output = []
+        for name_, content_type_, content_, similarity_ in rows:
+            output.append(
+                f"[{content_type_.upper()}] {name_} (similarity: {similarity_:.2f}):\n{content_}\n"
+            )
+        return "\n".join(output)
+    except Exception as e:
+        return f"Error searching profiles: {str(e)}"
+
+@tool
+async def search_singles(query: SinglesSearchQuery) -> str:
+    """This function is use to search information regarding men single badminton player and women single badminton player"""
+    return await asyncio.to_thread(search_singles_sync, query)
+
+@tool
+async def search_doubles(query: DoublesSearchQuery) -> str:
+    """This function is use to search information regarding men double badminton players, women double badminton players and mixed double badminton players"""
+    return await asyncio.to_thread(search_doubles_sync, query)
+
+@tool
+async def search_profile(query: ProfileSearchQuery) -> str:
+    """This function is use to find the profile of a specific player, including biography, career and achievements"""
+    return await asyncio.to_thread(search_profile_sync, query)
+
+@tool
+async def search_player_full_profile(query: FullPlayerSearchQuery) -> str:
+    """This function searches the full detail of a specific player including country, pair_name(for doubles player),
+    category, rank, points, biograph, career and achievments"""
 
     output = []
-    for doc, score in results:
-        output.append(f"- {doc.page_content}")
 
-    return "\n".join(output)
-        
+    singles_result = str(search_singles_sync(SinglesSearchQuery(name=query.name)))
+    if "No singles" not in singles_result:
+        output.append("RANKING (Singles)")
+        output.append(singles_result)
+
+    doubles_result = str(search_doubles_sync(DoublesSearchQuery(player_name=query.name)))
+    if "No doubles" not in doubles_result:
+        output.append("RANKING (Doubles)")
+        output.append(doubles_result)
+
+    profile_result = str(search_profile_sync(ProfileSearchQuery(query=query.query, name=query.name, k=5)))
+    if "No profile" not in profile_result:
+        output.append("PROFILE")
+        output.append(profile_result)
+
+    if not output:
+        return f"No information found for '{query.name}'."
+
+    return "\n\n".join(output)
+
 @tool
 async def search_web(query:str)->Dict[str,Any]:
     """
@@ -173,7 +294,7 @@ async def search_wikipedia(query: str) -> Dict[str, Any]:
         return {"error": f"Error: {str(e)}"}
 
 
-search_web_prompt, mongodb_prompt, answer_creation_prompt, manager_prompt = get_agent_system_prompt()
+search_web_prompt, database_prompt, answer_creation_prompt, manager_prompt = get_agent_system_prompt()
 
 search_web_agent = create_agent(
     model="gpt-5.4-nano",
@@ -181,10 +302,10 @@ search_web_agent = create_agent(
     system_prompt=search_web_prompt
 )
 
-mongodb_agent = create_agent(
+database_agent = create_agent(
     model="gpt-5.4-nano",
-    tools=[search_badminton_player_info],
-    system_prompt=mongodb_prompt
+    tools=[search_singles,search_doubles,search_profile,search_player_full_profile],
+    system_prompt=database_prompt
 )
 
 mcp_agent = None
@@ -201,9 +322,9 @@ async def call_search_web_agent(x: str):
     return {"messages": [AIMessage(content=response["messages"][-1].content)]}
 
 @tool
-async def call_mongodb_agent(x: str):
-    """call mongodb_agent for player info like country, birthdate, height"""
-    response = await mongodb_agent.ainvoke({"messages": [HumanMessage(content=f"Search for {x}")]})
+async def call_database_agent(x: str):
+    """call database for player info like country, birthdate, height"""
+    response = await database_agent.ainvoke({"messages": [HumanMessage(content=f"Search for {x}")]})
     return {"messages": [AIMessage(content=response["messages"][-1].content)]}
 
 @tool

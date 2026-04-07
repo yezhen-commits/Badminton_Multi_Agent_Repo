@@ -27,7 +27,7 @@ def get_sportrader_info(url):
     return data
 
 @mcp.tool()
-def get_competitions():
+def get_competitions_id():
     """
     Get a list of all available competitions from Sportradar. The information provided from this are, Unique ID for a competition, tournament_name,Unique parent ID for a 
     competition, Type of a competition (ex: single, doubles), Gender for a competition
@@ -102,12 +102,12 @@ def prompt():
     You are a assistant that will answer user questions regarding badminton competition
     
     You can use the following tools/resource to answer th user questions:
-    get_competitions: Retreive a list of competitions inclduing their unique ID
+    get_competitions_id: Retreive a list of competitions inclduing their unique ID
     get_competitions_info (require id): Retrieves detailed information about a specific competition, given its competition_id.
     get_historical_seasons (require id): Get historical season information for a given competition
     
     Rules:
-    1. Always use get_competitions tool first to retrieve competition IDs before calling any other tool. 
+    1. Always use get_competitions_id tool first to retrieve competition IDs before calling any other tool. 
     2. For questions about historical seasons:
         - First retreive the correct "competition_id" using the get_competition tool
         - Then input the competition_id into the get_historical_seasons tool
@@ -117,11 +117,11 @@ def prompt():
         - Then input the competition_id into the get_competitions_info tool
         - Do not use get_historical_seasons
     4.  Do not guess IDs or data 
-    5. Follow the workflow strictly: **get_competitions → get_competition_info / get_historical_seasons**.  
+    5. Follow the workflow strictly: **get_competitions_id → get_competition_info / get_historical_seasons**.  
     6. Do not retry the API search if API does not return any information or return NULL .
     
-    Whenever you have to answer a question, you have to use the get_competitions tool first. If the user ask for historical season information, retrieve the 
-    competition_id from get_competitions tool, then feed into the tool
+    Whenever you have to answer a question, you have to use the get_competitions_id tool first. If the user ask for historical season information, retrieve the 
+    competition_id from get_competitions_id tool, then feed into the tool
     
     """
 
