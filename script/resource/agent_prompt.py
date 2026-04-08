@@ -29,7 +29,6 @@ TOOLS AVAILABLE:
 - search_singles      -> for men's singles and women's singles ranking queries
 - search_doubles      -> for men's doubles, women's doubles and mixed doubles ranking queries
 - search_profile      -> for biography, career history and achievement queries
-- search_player_full  -> for general queries about a specific player across all sources
 
 Never answer from memory — always query the database.
 If a tool returns no results, tell the user clearly and suggest rephrasing.
@@ -52,11 +51,6 @@ Use search_profile when:
 - User asks about a player's career, professional history          -> content_type = "career"
 - User asks about a player's achievements, titles, awards          -> content_type = "achievement"
 - Example: "Tell me about Viktor Axelsen's career"
-
-Use search_player_full when:
-- User asks a general question about a player without specifying ranking or profile
-- User wants complete information about a player
-- Example: "Tell me everything about Lee Zii Jia"
 
 CATEGORY MAPPING:
 Always map the user's category to the correct database value:
@@ -122,6 +116,14 @@ User: "List out the points of top 3 players in all categories"
 -> Call 5: search_doubles | category="bwf_mixed_doubles_world_ranking" | rank_min=1, rank_max=3 | fields=["pair_name", "rank", "points"]
 -> Collect ALL 5 results -> pass to answer_creation_agent
 
+When a user asks for a full profile or detailed information about a specific player, you MUST call all three tools:
+1. search_singles with the player's name
+2. search_doubles with the player's name
+3. search_profile with the player's name
+
+Always run all three regardless of whether the player is a singles or doubles player, as some players compete in both.
+Combine the results into a coherent response.
+
 COUNTRY (always convert to 3-letter IOC code):
 - "Malaysia"                    -> "MAS"
 - "China"                       -> "CHN"
@@ -159,9 +161,6 @@ For search_doubles:
 - "Show top 10 doubles pairs"       -> fields = ["pair_name", "rank", "points", "category"]
 - "Which country is this pair from?"-> fields = ["pair_name", "country", "rank"]
 
-For search_player_full_profile function:
-- Only take the name of the player as input for the function
-
 Never request all fields unless the user explicitly asks for complete information.
 
 CONTENT TYPE SELECTION (for search_profile):
@@ -189,9 +188,6 @@ User: "Tell me about Viktor Axelsen's career"
 
 User: "What titles has Tai Tzu Ying won?"
 -> search_profile | query="Tai Tzu Ying titles and achievements", name="Tai Tzu Ying", content_type="achievement"
-
-User: "Tell me everything about Lee Zii Jia"
--> search_player_full | name="Lee Zii Jia"
 
 User: "Who has the most points in mixed doubles?"
 ->search_doubles | category="bwf_mixed_doubles_world_ranking", rank=1, fields=["pair_name", "rank", "points"]

@@ -27,7 +27,7 @@ SINGLES_ALLOWED_FIELDS = {
 }
 
 DOUBLES_ALLOWED_FIELDS = {
-    "player_name":  "dp.name",
+    "name":  "dp.name",
     "country":      "dp.country",
     "pair_name":    "p.pair_name",
     "category":     "p.category",
@@ -46,30 +46,32 @@ class SinglesSearchQuery(BaseModel):
     rank:       Optional[int]   = Field(None)
     rank_min:   Optional[int]   = Field(None)
     rank_max:   Optional[int]   = Field(None)
-    limit:      int             = Field(10)
     points:     Optional[int]   = Field(None)
+    limit:      int             = Field(6, description="Number of results to return, max 20")
 
 class DoublesSearchQuery(BaseModel):
     category:       Optional[str]   = Field(None)
-    player_name:    Optional[str]   = Field(None)
+    name:           Optional[str]   = Field(None)
     pair_name:      Optional[str]   = Field(None)
     country:        Optional[str]   = Field(None)
     rank:           Optional[int]   = Field(None)
     rank_min:       Optional[int]   = Field(None)
     rank_max:       Optional[int]   = Field(None)
-    limit:          int             = Field(10)
     points:         Optional[int]   = Field(None)  
+    limit:          int             = Field(6, description="Number of results to return, max 20")
 
 class ProfileSearchQuery(BaseModel):
     query:          str           = Field(...,  description="Natural language question e.g. 'Olympic gold medal'")
     name:           Optional[str] = Field(None, description="Filter by player name")
     content_type:   Optional[str] = Field(None, description="'biography', 'career', or 'achievement'")
-    k:              int           = Field(3,    description="Number of results to return")
-
-
-class FullPlayerSearchQuery(BaseModel):
-    query:str = Field(...,  description="Natural language question e.g. 'Olympic gold medal'")
-    name: str = Field(..., description="Player name to search across all tables e.g. 'Aaron Chia'")
+    k:              int           = Field(6,    description="Number of results to return, max 20")
+        
+    @model_validator(mode="before")
+    @classmethod
+    def handle_string_input(cls, values: Any) -> Any:
+        if isinstance(values, str):
+            return {"query": values}
+        return values
     
 def search_singles_sync(query: SinglesSearchQuery) -> str:
     try:
@@ -85,19 +87,20 @@ def search_singles_sync(query: SinglesSearchQuery) -> str:
         """
         params = []
 
-        if query.category:  sql += " AND category = %s";   params.append(query.category)
-        if query.country:   sql += " AND country = %s";    params.append(query.country.upper())
+        if query.category:  sql += " AND category = %s";    params.append(query.category)
+        if query.country:   sql += " AND country = %s";     params.append(query.country.upper())
         if query.rank:      sql += " AND rank = %s";        params.append(query.rank)
         if query.rank_min:  sql += " AND rank >= %s";       params.append(query.rank_min)
         if query.rank_max:  sql += " AND rank <= %s";       params.append(query.rank_max)
         if query.name:
-            name_parts = query.name.strip().split()
+            clean_name = query.name.replace(",", "").strip()
+            name_parts = clean_name.split()
             part_conditions = " OR ".join(["name ILIKE %s"] * len(name_parts))
             sql += f" AND ({part_conditions})"
             params.extend(f"%{part}%" for part in name_parts)
-
+    
         sql += " ORDER BY rank ASC LIMIT %s"
-        params.append(query.limit)
+        params.append(min(query.limit, 20))
 
         cursor.execute(sql, params)
         rows = cursor.fetchall()
@@ -137,14 +140,15 @@ def search_doubles_sync(query: DoublesSearchQuery) -> str:
         if query.rank:          sql += " AND p.rank = %s";             params.append(query.rank)
         if query.rank_min:      sql += " AND p.rank >= %s";            params.append(query.rank_min)
         if query.rank_max:      sql += " AND p.rank <= %s";            params.append(query.rank_max)
-        if query.player_name:
-            name_parts = query.player_name.strip().split()
-            part_conditions = " OR ".join(["dp.name ILIKE %s"] * len(name_parts))
+        if query.name:
+            clean_name = query.name.replace(",", "").strip()
+            name_parts = clean_name.split()
+            part_conditions = " OR ".join(["name ILIKE %s"] * len(name_parts))
             sql += f" AND ({part_conditions})"
             params.extend(f"%{part}%" for part in name_parts)
 
         sql += " ORDER BY p.rank ASC LIMIT %s"
-        params.append(query.limit)
+        params.append(min(query.limit, 20))
 
         cursor.execute(sql, params)
         rows = cursor.fetchall()
@@ -181,13 +185,14 @@ def search_profile_sync(query: ProfileSearchQuery) -> str:
 
         if query.content_type:  sql += " AND content_type = %s";    params.append(query.content_type)
         if query.name:
-            name_parts = query.name.strip().split()
+            clean_name = query.name.replace(",", "").strip()
+            name_parts = clean_name.split()
             part_conditions = " OR ".join(["name ILIKE %s"] * len(name_parts))
             sql += f" AND ({part_conditions})"
             params.extend(f"%{part}%" for part in name_parts)
-
+    
         sql += " ORDER BY similarity DESC LIMIT %s"
-        params.append(query.k)
+        params.append(min(query.k, 20))
 
         cursor.execute(sql, params)
         rows = cursor.fetchall()
@@ -220,33 +225,6 @@ async def search_doubles(query: DoublesSearchQuery) -> str:
 async def search_profile(query: ProfileSearchQuery) -> str:
     """This function is use to find the profile of a specific player, including biography, career and achievements"""
     return await asyncio.to_thread(search_profile_sync, query)
-
-@tool
-async def search_player_full_profile(query: FullPlayerSearchQuery) -> str:
-    """This function searches the full detail of a specific player including country, pair_name(for doubles player),
-    category, rank, points, biograph, career and achievments"""
-
-    output = []
-
-    singles_result = str(search_singles_sync(SinglesSearchQuery(name=query.name)))
-    if "No singles" not in singles_result:
-        output.append("RANKING (Singles)")
-        output.append(singles_result)
-
-    doubles_result = str(search_doubles_sync(DoublesSearchQuery(player_name=query.name)))
-    if "No doubles" not in doubles_result:
-        output.append("RANKING (Doubles)")
-        output.append(doubles_result)
-
-    profile_result = str(search_profile_sync(ProfileSearchQuery(query=query.query, name=query.name, k=5)))
-    if "No profile" not in profile_result:
-        output.append("PROFILE")
-        output.append(profile_result)
-
-    if not output:
-        return f"No information found for '{query.name}'."
-
-    return "\n\n".join(output)
 
 @tool
 async def search_web(query:str)->Dict[str,Any]:
@@ -304,14 +282,14 @@ search_web_agent = create_agent(
 
 database_agent = create_agent(
     model="gpt-5.4-nano",
-    tools=[search_singles,search_doubles,search_profile,search_player_full_profile],
+    tools=[search_singles,search_doubles,search_profile],
     system_prompt=database_prompt
 )
 
 mcp_agent = None
 
 answer_creation_agent = create_agent(
-    model="gpt-5.4-mini",
+    model="gpt-5.4-nano",
     system_prompt=answer_creation_prompt
 )
 
