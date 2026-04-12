@@ -2,7 +2,7 @@
 
 A multi-agent chatbot system that answers badminton-related questions. The system uses a hierarchical multi-agent architecture where multiple AI agents are assigned to specific task including retrieving information from a structured database, vector database, extracting information from external resources and provide contextual insights. The platform is implemented using FastAPI for backend services and uses OpenAI GPT models to provide understand user's question and provide good answer. This system also support chat history storage and retrieval, allowing user to continue the conversation even if close the web application. The frontend of the system is created using React with Typescript, styled with CSS and built with Vite. 
 
-Note: When you use the web app for the first time, it will take time for to generate an answer beacuse in render, their free tier will cause the backend to sleep after 15 minutes of inactivity.
+Note: When you use the web app for the first time, it will take time to generate an answer beacuse render will take time to "wake up". In render, their free tier will cause the backend to sleep after 15 minutes of inactivity.
 ---
 
 ## ShuttleInfo AI Multi Agent System Architecture 
